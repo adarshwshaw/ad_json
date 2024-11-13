@@ -234,6 +234,8 @@ JKV parseJKV(JParser *parser) {
     if (ctok.kind == JT_STRING) {
         consumeTok(parser);
         jkv.key = ctok.tok;
+        jkv.key.size -= 2;
+        jkv.key.str++;
     } else {
         printf(SV_FMT, SV_ARG(ctok.tok));
         assert(0);
@@ -284,6 +286,8 @@ JValue parseJValue(JParser *parser) {
     case JT_STRING: {
         val.kind = JV_STRING;
         val.as.str = ctok.tok;
+        val.as.str.str++;
+        val.as.str.size -= 2;
         break;
     }
     case JT_NUMBER: {
@@ -351,6 +355,7 @@ void debugPrint(JValue val) {
     }
 }
 void freeJson(Json *json) {
+    printf("mem used : %lld\n", json->arena.count);
     freeArena(&json->arena);
     memset(json, 0, sizeof(*json));
 }
