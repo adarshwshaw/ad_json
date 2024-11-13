@@ -4,7 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#define FILE_PATH "test1.json"
+#define FILE_PATH "test.json"
 
 typedef enum {
     JT_NULL,
@@ -48,6 +48,9 @@ typedef struct SV {
     uint64_t size;
     char *str;
 } SV;
+
+#define SV_FMT "%.*s"
+#define SV_ARG(X) (int)((X).size), (X).str
 
 int SV_cmp(SV sv1, SV sv2) {
     if (sv1.size != sv2.size)
@@ -158,7 +161,7 @@ JTOKS jtokenize(JArena *mem, char *str, uint64_t len) {
                 tok.tok.size++;
                 idx++;
             }
-            idx++;
+            idx--;
             array_append(mem, &toks, tok);
         } else if (c == ',') {
             JTOK tok = {.kind = JT_COMMA, .tok = {.size = 1, .str = &str[idx]}};
@@ -222,16 +225,56 @@ typedef struct {
     int idx;
     JArena *arena;
 } JParser;
-// JValue parseJObject(JArena *arena, JTOKS tok, uint64_t start) {
-//     JValue val = {0};
-//     val.kind = JV_OBJ;
-//     JTOK ctok = tok.pool[start];
-//     if (ctok.kind == JT_OBRACE) {
-//         start++;
-//     } else {
-//         assert(0 && "invalid jobject");
-//     }
-// }
+JTOK peekTok(JParser *parser) { return parser->toks.pool[parser->idx]; }
+#define consumeTok(parser) (parser)->idx++
+JValue parseJValue(JParser *parser);
+JKV parseJKV(JParser *parser) {
+    JKV jkv = {0};
+    JTOK ctok = peekTok(parser);
+    if (ctok.kind == JT_STRING) {
+        consumeTok(parser);
+        jkv.key = ctok.tok;
+    } else {
+        printf(SV_FMT, SV_ARG(ctok.tok));
+        assert(0);
+    }
+    ctok = peekTok(parser);
+    if (ctok.kind == JT_COLON) {
+        consumeTok(parser);
+    } else {
+        assert(0);
+    }
+    jkv.val = parseJValue(parser);
+    return jkv;
+}
+JValue parseJObject(JParser *parser) {
+    JValue val = {0};
+    val.kind = JV_OBJ;
+    val.as.obj = jalloc(parser->arena, sizeof(JObject));
+    JTOK ctok = peekTok(parser);
+    if (ctok.kind == JT_OBRACE) {
+        consumeTok(parser);
+    } else {
+        assert(0 && "invalid jobject");
+    }
+    ctok = peekTok(parser);
+    while (ctok.kind != JT_CBRACE) {
+        JKV jkv = parseJKV(parser);
+        array_append(parser->arena, val.as.obj, jkv);
+        ctok = peekTok(parser);
+        if (ctok.kind == JT_COMMA) {
+            consumeTok(parser);
+            ctok = peekTok(parser);
+            continue;
+        } else if (ctok.kind == JT_CBRACE) {
+            continue;
+        } else {
+            printf(SV_FMT, SV_ARG(ctok.tok));
+            assert(0 && "unreachable parseobject");
+        }
+    }
+    return val;
+}
 
 JValue parseJValue(JParser *parser) {
 
@@ -259,13 +302,16 @@ JValue parseJValue(JParser *parser) {
         }
         break;
     }
-    // case JT_OBRACE: {
-    //     val = parseJObject(arena, tok, start) break;
-    // }
+    case JT_OBRACE: {
+        val = parseJObject(parser);
+        break;
+    }
     default:
+        printf(SV_FMT, SV_ARG(ctok.tok));
         assert(0 && "Unreachable parseJValue");
         break;
     }
+    consumeTok(parser);
     return val;
 }
 Json parseJson(const char *jsonstr, int len) {
@@ -284,13 +330,20 @@ Json parseJson(const char *jsonstr, int len) {
 void debugPrint(JValue val) {
     switch (val.kind) {
     case JV_STRING:
-        printf("%.*s", (int)val.as.str.size, val.as.str.str);
+        printf(SV_FMT, SV_ARG(val.as.str));
         break;
     case JV_NUMBER:
         printf("%d", val.as.num.integer);
         break;
     case JV_BOOL:
         printf("%s", val.as.boolean ? "true" : "false");
+        break;
+    case JV_OBJ:
+        for (int i = 0; i < val.as.obj->count; i++) {
+            printf(SV_FMT " : ", SV_ARG(val.as.obj->pool[i].key));
+            debugPrint(val.as.obj->pool[i].val);
+            printf("\n");
+        }
         break;
     default:
         assert(0 && "Unreachable parseJValue");
