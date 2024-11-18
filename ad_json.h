@@ -1,7 +1,6 @@
 #ifndef AD_JSON_H
 #define AD_JSON_H
 
-
 #include <assert.h>
 #include <ctype.h>
 #include <stdint.h>
@@ -10,11 +9,10 @@
 #include <string.h>
 
 #ifdef AD_JSON_LIB_MOD
-#define AD_JSON_API 
+#define AD_JSON_API
 #else
 #define AD_JSON_API static
 #endif
-
 
 typedef enum {
     JT_NULL,
@@ -90,6 +88,7 @@ AD_JSON_API JTOKS jtokenize(JArena *mem, char *str, uint64_t len);
 
 typedef union JData JData;
 typedef struct JObject JObject;
+typedef struct JArray JArray;
 typedef union {
     int32_t integer;
     float decimal;
@@ -100,7 +99,9 @@ union JData {
     JNumber num;
     _Bool boolean;
     JObject *obj;
+    JArray *arr;
 };
+
 typedef enum {
     JV_NUMBER,
     JV_BOOL,
@@ -113,6 +114,10 @@ typedef struct JValue {
     JVKind kind;
     JData as;
 } JValue;
+struct JArray {
+    uint64_t count, size;
+    JValue *pool;
+};
 typedef struct {
     SV key;
     JValue val;
@@ -139,10 +144,12 @@ AD_JSON_API JTOK peekTok(JParser *parser);
 AD_JSON_API JValue parseJValue(JParser *parser);
 AD_JSON_API JKV parseJKV(JParser *parser);
 AD_JSON_API JValue parseJObject(JParser *parser);
+AD_JSON_API JValue parseJArray(JParser *parser);
 AD_JSON_API Json parseJson(const char *jsonstr, int len);
 AD_JSON_API void debugPrint(JValue val);
 AD_JSON_API void freeJson(Json *json);
 
+#define AD_JSON_IMPLEMENTATION
 #ifdef AD_JSON_IMPLEMENTATION
 
 AD_JSON_API int SV_cmp(SV sv1, SV sv2) {
@@ -196,6 +203,15 @@ AD_JSON_API JTOKS jtokenize(JArena *mem, char *str, uint64_t len) {
 
         } else if (c == '}') {
             JTOK tok = {.kind = JT_CBRACE,
+                        .tok = {.str = &str[idx], .size = 1}};
+            array_append(mem, &toks, tok);
+        } else if (c == '[') {
+            JTOK tok = {.kind = JT_OBRACKET,
+                        .tok = {.str = &str[idx], .size = 1}};
+            array_append(mem, &toks, tok);
+
+        } else if (c == ']') {
+            JTOK tok = {.kind = JT_CBRACKET,
                         .tok = {.str = &str[idx], .size = 1}};
             array_append(mem, &toks, tok);
         } else if (c == '"') {
@@ -253,7 +269,9 @@ AD_JSON_API JTOKS jtokenize(JArena *mem, char *str, uint64_t len) {
     }
     return toks;
 }
-AD_JSON_API JTOK peekTok(JParser *parser) { return parser->toks.pool[parser->idx]; }
+AD_JSON_API JTOK peekTok(JParser *parser) {
+    return parser->toks.pool[parser->idx];
+}
 
 AD_JSON_API JKV parseJKV(JParser *parser) {
     JKV jkv = {0};
@@ -305,6 +323,35 @@ AD_JSON_API JValue parseJObject(JParser *parser) {
     return val;
 }
 
+AD_JSON_API JValue parseJArray(JParser *parser) {
+    JValue val = {0};
+    val.kind = JV_ARR;
+    val.as.arr = jalloc(parser->arena, sizeof(JArray));
+    JTOK ctok = peekTok(parser);
+    if (ctok.kind == JT_OBRACKET) {
+        consumeTok(parser);
+    } else {
+        assert(0 && "Error: Array should start with [");
+    }
+    ctok = peekTok(parser);
+    while (ctok.kind != JT_CBRACKET) {
+        JValue ival = parseJValue(parser);
+        array_append(parser->arena, val.as.arr, ival);
+        ctok = peekTok(parser);
+        if (ctok.kind == JT_COMMA) {
+            consumeTok(parser);
+            ctok = peekTok(parser);
+            continue;
+        } else if (ctok.kind == JT_CBRACKET) {
+            continue;
+        } else {
+            printf(SV_FMT, SV_ARG(ctok.tok));
+            assert(0 && "unreachable parseArray");
+        }
+    }
+    return val;
+}
+
 AD_JSON_API JValue parseJValue(JParser *parser) {
 
     JTOK ctok = parser->toks.pool[parser->idx];
@@ -335,6 +382,10 @@ AD_JSON_API JValue parseJValue(JParser *parser) {
     }
     case JT_OBRACE: {
         val = parseJObject(parser);
+        break;
+    }
+    case JT_OBRACKET: {
+        val = parseJArray(parser);
         break;
     }
     default:
@@ -370,12 +421,23 @@ AD_JSON_API void debugPrint(JValue val) {
         printf("%s", val.as.boolean ? "true" : "false");
         break;
     case JV_OBJ:
+        printf("{ ");
         for (int i = 0; i < val.as.obj->count; i++) {
             printf(SV_FMT " : ", SV_ARG(val.as.obj->pool[i].key));
             debugPrint(val.as.obj->pool[i].val);
             printf("\n");
         }
+        printf("}\n");
         break;
+    case JV_ARR: {
+        printf("[ ");
+        for (int i = 0; i < val.as.arr->count; i++) {
+            debugPrint(val.as.arr->pool[i]);
+            printf(", ");
+        }
+        printf("]\n");
+        break;
+    }
     default:
         assert(0 && "Unreachable parseJValue");
         break;
@@ -386,5 +448,5 @@ AD_JSON_API void freeJson(Json *json) {
     freeArena(&json->arena);
     memset(json, 0, sizeof(*json));
 }
-#endif //AD_JSON_IMPLEMENTATION
-#endif //AD_JOSN_H
+#endif // AD_JSON_IMPLEMENTATION
+#endif // AD_JOSN_H
